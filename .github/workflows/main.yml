@@ -3,7 +3,7 @@ name: Enterovirus Prediction Bot
 on:
   schedule:
     # 台北時間週六 12:00 等於 UTC 時間週六 04:00
-    - cron: '0 4 * * 6'
+    - cron: '45 5 * * *'
   workflow_dispatch: # 允許手動點擊執行
 
 jobs:
