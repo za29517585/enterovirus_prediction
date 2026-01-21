@@ -2,7 +2,7 @@ name: Daily Disease Forecast
 
 on:
   schedule:
-    - cron: '0 8 * * *' # 台灣時間每天下午 4 點
+    - cron: '0 4 * * 6' 
   workflow_dispatch:      # 支援手動執行
 
 jobs:
