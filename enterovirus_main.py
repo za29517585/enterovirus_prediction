@@ -13,7 +13,7 @@ from sklearn.metrics import mean_absolute_error
 # ==========================================
 TARGET_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1seGpSiQSUCZMgEqs66nsycI5GLvqTiam8mLDry5G4t8/edit?usp=sharing'
 SERVICE_ACCOUNT_FILE = 'service_account.json'
-gcp_json_content = os.getenv("GCP_SERVICE_ACCOUNT")
+gcp_json_content = os.getenv("GCP_SA_KEY")
 
 if gcp_json_content:
     print("✅ 偵測到 GCP_SERVICE_ACCOUNT 環境變數，正在產生憑證檔...")
