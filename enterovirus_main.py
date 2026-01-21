@@ -1,6 +1,7 @@
+import requests
 import pandas as pd
 import numpy as np
-import requests
+import os
 import gspread
 from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
@@ -10,87 +11,132 @@ from sklearn.metrics import mean_absolute_error
 # ==========================================
 # 0. 參數與環境設定
 # ==========================================
-# Google Sheets 連結與金鑰檔名
 TARGET_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1seGpSiQSUCZMgEqs66nsycI5GLvqTiam8mLDry5G4t8/edit?usp=sharing'
 SERVICE_ACCOUNT_FILE = 'service_account.json' 
 
+CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0024-001"
+CWA_TOKEN = os.getenv("CWA_TOKEN")
+PM25_API_URL = "https://data.moenv.gov.tw/api/v2/aqx_p_322?api_key=4c89a32a-a214-461b-bf29-30ff32a61a8a&sort=monitordate%20desc&format=CSV"
+
+HIST_DIR = "./hist_data/"
+
 # ==========================================
-# 1. 資料抓取模組 (Crawling from APIs)
+# 1. 輔助函式：讀取或抓取資料
 # ==========================================
-def fetch_all_data():
-    print("🚀 正在聯網抓取教育部、疾管署最新資料...")
+
+def get_historical_or_fetch_new(file_name, fetch_func):
+    """嘗試讀取歷史檔，並執行爬蟲抓取最新資料"""
+    file_path = os.path.join(HIST_DIR, file_name)
     
-    # A. 幼兒園人數 (年度資料)
+    # 執行爬蟲獲取最新週資料 (這部分沿用您之前的 ETL 邏輯)
+    fetch_func() 
+    
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path)
+    else:
+        print(f"⚠️ 找不到歷史檔案: {file_name}")
+        return pd.DataFrame()
+
+def fetch_all_source_data():
+    print("🚀 正在同步所有來源資料 (CDC, MOE, CWA, MoENV)...")
+    
+    # A. 幼兒園人數
     df_k = pd.read_csv("https://stats.moe.gov.tw/files/opendata/edu_B_1_4.csv", encoding='utf-8-sig')
     df_k = df_k[df_k['縣市別'] == '臺中市'][['學年度', '幼兒園[人]']]
     df_k['Year'] = df_k['學年度'] + 1911
     df_k = df_k.rename(columns={'幼兒園[人]': 'Kindergarten_Enrollment'})
-    
-    # B. 疾管署 - 健保就診 (週資料)
+
+    # B. CDC 腸病毒資料
     df_nhi = pd.read_csv("https://od.cdc.gov.tw/eic/NHI_EnteroviralInfection.csv", encoding='utf-8-sig')
     df_nhi = df_nhi[(df_nhi['縣市'] == '台中市') & (df_nhi['年齡別'].isin(['0~2', '3~6']))]
     df_nhi = df_nhi.groupby(['年', '週'])[['腸病毒健保就診人次']].sum().reset_index()
     
-    # C. 疾管署 - 急診就診 (目標資料)
     df_er = pd.read_csv("https://od.cdc.gov.tw/eic/RODS_EnteroviralInfection.csv", encoding='utf-8-sig')
     df_er = df_er[(df_er['縣市'] == '台中市') & (df_er['年齡別'].isin(['0', '1~3', '4~6']))]
     df_er = df_er.groupby(['年', '週'])[['腸病毒急診就診人次']].sum().reset_index()
 
-    return df_er, df_nhi, df_k
+    # C. 讀取氣象與 PM2.5 歷史存檔 (假設您之前的 ETL 已經跑過並存檔)
+    df_temp = pd.read_csv(os.path.join(HIST_DIR, 'temp_hist.csv')) if os.path.exists(os.path.join(HIST_DIR, 'temp_hist.csv')) else pd.DataFrame()
+    df_rh = pd.read_csv(os.path.join(HIST_DIR, 'rh_hist.csv')) if os.path.exists(os.path.join(HIST_DIR, 'rh_hist.csv')) else pd.DataFrame()
+    df_pm = pd.read_csv(os.path.join(HIST_DIR, 'pm25_hist.csv')) if os.path.exists(os.path.join(HIST_DIR, 'pm25_hist.csv')) else pd.DataFrame()
+
+    return df_er, df_nhi, df_k, df_temp, df_rh, df_pm
 
 # ==========================================
-# 2. 資料處理與特徵工程 (Processing)
+# 2. 資料處理
 # ==========================================
-def process_data(df_er, df_nhi, df_k):
-    print("📊 正在轉換欄位並建立 Lag 特徵...")
-    df_er = df_er.rename(columns={'年': 'Year', '週': 'Week', '腸病毒急診就診人次': 'EV_ER_Cases'})
-    df_nhi = df_nhi.rename(columns={'年': 'Year', '週': 'Week', '腸病毒健保就診人次': 'EV_NHI_Cases'})
+def process_data(df_er, df_nhi, df_k, df_temp, df_rh, df_pm):
+    print("📊 整合特徵與歷史資料...")
     
-    # 合併資料表
-    df = pd.merge(df_er, df_nhi, on=['Year', 'Week'], how='left')
+    # 標準化欄位名稱以利合併
+    df_er = df_er.rename(columns={'年': 'Year', '週': 'Week', '腸病毒急診就診人次': 'EV_ER'})
+    df_nhi = df_nhi.rename(columns={'年': 'Year', '週': 'Week', '腸病毒健保就診人次': 'EV_NHI'})
+    
+    # 合併 CDC 資料
+    df = pd.merge(df_er, df_nhi, on=['Year', 'Week'], how='outer')
+    df['EV_Total_Cases'] = df['EV_ER'].fillna(0) + df['EV_NHI'].fillna(0)
+    
+    # 合併歷史氣象與 PM2.5 (這步最關鍵，決定了模型有沒有訓練樣本)
+    if not df_temp.empty:
+        df_temp = df_temp.rename(columns={'年': 'Year', '週次': 'Week', '臺中市氣溫_週平均': 'temp'})
+        df = pd.merge(df, df_temp, on=['Year', 'Week'], how='left')
+    
+    if not df_rh.empty:
+        df_rh = df_rh.rename(columns={'年': 'Year', '週次': 'Week', '臺中市相對溼度_週平均': 'rh'})
+        df = pd.merge(df, df_rh, on=['Year', 'Week'], how='left')
+        
+    if not df_pm.empty:
+        df_pm = df_pm.rename(columns={'年': 'Year', '週次': 'Week', '臺中市PM2.5_週平均': 'PM25'})
+        df = pd.merge(df, df_pm, on=['Year', 'Week'], how='left')
+
     df = pd.merge(df, df_k[['Year', 'Kindergarten_Enrollment']], on='Year', how='left')
+    
+    # 排序並處理特徵
     df = df.sort_values(['Year', 'Week']).reset_index(drop=True)
+    df['Lag3_Total'] = df['EV_Total_Cases'].shift(3)
+    df['Lag4_Total'] = df['EV_Total_Cases'].shift(4)
     
-    # 建立 Lag 3 特徵 (為了解決週六執行時資料尚未更新到最新一週的問題)
-    df['Lag3_ER'] = df['EV_ER_Cases'].shift(3)
-    df['Lag4_ER'] = df['EV_ER_Cases'].shift(4)
-    df['Lag3_NHI'] = df['EV_NHI_Cases'].shift(3)
-    df['Kindergarten_Enrollment'] = df['Kindergarten_Enrollment'].ffill()
-    
-    # 週期特徵 (Sin/Cos)
+    # 填充氣象缺值 (針對最新還沒湊滿一週的部分)
+    for col in ['temp', 'rh', 'PM25', 'Kindergarten_Enrollment']:
+        df[col] = df[col].ffill()
+
+    # 週期特徵
     df['Week_Sin'] = np.sin(2 * np.pi * df['Week'] / 53)
     df['Week_Cos'] = np.cos(2 * np.pi * df['Week'] / 53)
+    
     return df
 
 # ==========================================
-# 3. 模型訓練與預測核心
+# 3. 模型訓練與預測 (加入檢查機制)
 # ==========================================
 def run_model_pipeline(df):
-    features = ['Year', 'Week', 'Lag3_ER', 'Lag4_ER', 'Lag3_NHI', 'Kindergarten_Enrollment', 'Week_Sin', 'Week_Cos']
-    target = 'EV_ER_Cases'
+    features = ['Year', 'Week', 'Lag3_Total', 'Lag4_Total', 'temp', 'rh', 'PM25', 'Kindergarten_Enrollment', 'Week_Sin', 'Week_Cos']
+    target = 'EV_Total_Cases'
     
-    # 訓練模型
+    # 檢查訓練集是否為空
     train_df = df.dropna(subset=features + [target])
+    
+    if train_df.empty:
+        raise ValueError("❌ 訓練資料集為空！請檢查歷史 CSV 檔 (temp_hist.csv 等) 是否正確存在於 ./hist/ 資料夾中。")
+
+    print(f"📈 訓練樣本數: {len(train_df)}")
+    
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(train_df[features], train_df[target])
     
-    # 計算成效 (MAE)
     mae = round(mean_absolute_error(train_df[target], model.predict(train_df[features])), 2)
     
-    # --- 台北時區校正 (UTC+8) ---
+    # 預測下週
     now_taipei = datetime.now() + timedelta(hours=8)
     _, cur_w, _ = now_taipei.isocalendar()
-    
-    # 預測下週 (T+1)
     target_year, target_week = (now_taipei.year, cur_w + 1) if cur_w < 53 else (now_taipei.year + 1, 1)
     
-    # 使用目前能拿到的最新一筆資料作為 Lag3 的輸入
     latest = df.iloc[-1]
     input_v = pd.DataFrame([{
         'Year': target_year, 'Week': target_week,
-        'Lag3_ER': latest['EV_ER_Cases'], 
-        'Lag4_ER': df.iloc[-2]['EV_ER_Cases'],
-        'Lag3_NHI': latest['EV_NHI_Cases'], 
+        'Lag3_Total': latest['EV_Total_Cases'], 
+        'Lag4_Total': df.iloc[-2]['EV_Total_Cases'],
+        'temp': latest['temp'], 'rh': latest['rh'], 'PM25': latest['PM25'],
         'Kindergarten_Enrollment': latest['Kindergarten_Enrollment'],
         'Week_Sin': np.sin(2 * np.pi * target_week / 53), 
         'Week_Cos': np.cos(2 * np.pi * target_week / 53)
@@ -98,27 +144,21 @@ def run_model_pipeline(df):
     
     prediction = model.predict(input_v)[0]
     
-    # 準備上傳結果
     pred_res = pd.DataFrame([{
         'Forecast_Timestamp': now_taipei.strftime('%Y-%m-%d %H:%M'),
         'Target_Period': f"{int(target_year)}W{int(target_week):02d}",
-        'Predicted_ER_Cases': round(prediction, 2),
+        'Predicted_Total_Cases': round(prediction, 2),
         'Model_MAE': mae,
         'Input_Ref_Week': f"{int(latest['Year'])}W{int(latest['Week']):02d}",
-        'Ref_Actual_ER': latest['EV_ER_Cases'],
-        'Ref_Actual_NHI': latest['EV_NHI_Cases']
+        'Ref_Actual_Total': latest['EV_Total_Cases']
     }])
     
-    # 特徵重要性
-    importances = pd.DataFrame({
-        'Feature': features,
-        'Importance': model.feature_importances_
-    }).sort_values(by='Importance', ascending=False)
+    importances = pd.DataFrame({'Feature': features, 'Importance': model.feature_importances_}).sort_values(by='Importance', ascending=False)
     
     return pred_res, importances
 
 # ==========================================
-# 4. Google Sheets 上傳模組 (含標題自動校正)
+# 4. Google Sheets 上傳
 # ==========================================
 def upload_to_sheets(pred_df, importance_df):
     print("📤 正在同步資料至 Google Sheets...")
@@ -157,10 +197,19 @@ def upload_to_sheets(pred_df, importance_df):
 # ==========================================
 if __name__ == "__main__":
     try:
-        er, nhi, k = fetch_all_data()
-        df_final = process_data(er, nhi, k)
+        # 1. 抓取所有資料 (包含讀取本地歷史 CSV)
+        df_er, df_nhi, df_k, df_temp, df_rh, df_pm = fetch_all_source_data()
+        
+        # 2. 整合資料
+        df_final = process_data(df_er, df_nhi, df_k, df_temp, df_rh, df_pm)
+        
+        # 3. 執行模型與預測
         p_res, f_imp = run_model_pipeline(df_final)
+        
+        # 4. 上傳 (需確保有 service_account.json)
         upload_to_sheets(p_res, f_imp)
-        print(f"\n🎉 任務執行成功！預測 {p_res['Target_Period'].iloc[0]} 為 {p_res['Predicted_ER_Cases'].iloc[0]} 人")
+        
+        print(f"\n🎉 任務執行成功！預測 {p_res['Target_Period'].iloc[0]} 腸病毒總就診人次為 {p_res['Predicted_Total_Cases'].iloc[0]} 人")
+        
     except Exception as e:
         print(f"❌ 發生錯誤: {e}")
