@@ -25,7 +25,7 @@ jobs:
         env:
           CWA_TOKEN: ${{ secrets.CWA_TOKEN }}
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-        run: python forecast_etl.py
+        run: python entervirus_main.py
 
       - name: 自動同步更新後的歷史檔案至 GitHub
         run: |
