@@ -16,6 +16,10 @@ CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0024-001"
 CWA_TOKEN = os.getenv("CWA_TOKEN")
 PM25_API_URL = "https://data.moenv.gov.tw/api/v2/aqx_p_322?api_key=4c89a32a-a214-461b-bf29-30ff32a61a8a&sort=monitordate%20desc&format=CSV"
 TARGET_SHEET_URL = "https://docs.google.com/spreadsheets/d/1seGpSiQSUCZMgEqs66nsycI5GLvqTiam8mLDry5G4t8/edit?usp=sharing"
+# LINE 機器人設定
+LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_USER = os.getenv("LINE_USER_ID")
+GITHUB_REPO_URL = "https://raw.githubusercontent.com/za29517585/enterovirus_prediction/main"
 
 HIST_DIR = "./hist_data/"
 
@@ -157,6 +161,57 @@ def run_model_pipeline(df):
     return pred_res, importances
 
 # ==========================================
+# 新增功能：LINE 機器人推送通知
+# ==========================================
+def send_line_notification(prediction_val):
+    if not LINE_TOKEN or not LINE_USER:
+        print("⚠️ 找不到 LINE Token 或 User ID，跳過通知發送。")
+        return
+
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_TOKEN}"
+    }
+
+    # 判斷風險等級與訊息
+    if prediction_val < 1040:
+        status = "🟢 低風險（安全期）"
+        msg = f"{status}\n下週預估人數：{prediction_val}\n下週為低風險期，建議維持一般洗手衛生習慣，落實正確洗手5步驟：「濕、搓（至少20秒）、沖、捧、擦」，以及防治腸病毒5口訣「勤洗手、足睡眠、多運動、洗玩具、及早治療」。"
+        img_list = ["low1.jpg", "low2.jpg"]
+    elif 1040 <= prediction_val <= 1300:
+        status = "🟡 中風險（警覺期）"
+        msg = f"{status}\n下週預估人數：{prediction_val}\n下週為中風險期，請各位家長要多注意自己就學的孩子們體溫及口腔有無出現小水泡，該提高警覺囉～"
+        img_list = ["mid.jpg"]
+    else:
+        status = "🔴 高風險（流行期)"
+        msg = f"{status}\n下週預估人數：{prediction_val}\n下週為高風險期，請記得做好個人防護及加強環境消毒（如 500ppm 漂白水），若小朋友有生病現象，記得要落實「生病不上學」，保護自己保護別人～"
+        img_list = ["high.jpg"]
+
+    # 封裝訊息內容
+    messages = [{"type": "text", "text": msg}]
+    
+    # 加入圖片訊息 (LINE API 限制單次 Push 最多 5 則訊息)
+    for img_name in img_list:
+        img_url = f"{GITHUB_REPO_URL}/{img_name}"
+        messages.append({
+            "type": "image",
+            "originalContentUrl": img_url,
+            "previewImageUrl": img_url
+        })
+
+    payload = {
+        "to": LINE_USER,
+        "messages": messages
+    }
+
+    res = requests.post(url, headers=headers, data=json.dumps(payload))
+    if res.status_code == 200:
+        print(f"✅ LINE 通知已發送：{status}")
+    else:
+        print(f"❌ LINE 通知發送失敗: {res.text}")
+
+# ==========================================
 # 4. Google Sheets 上傳
 # ==========================================
 def upload_to_sheets(pred_df, importance_df):
@@ -208,19 +263,20 @@ def upload_to_sheets(pred_df, importance_df):
 # ==========================================
 if __name__ == "__main__":
     try:
-        # 1. 抓取所有資料 (包含讀取本地歷史 CSV)
+        # 1. 抓取所有資料
         df_er, df_nhi, df_k, df_temp, df_rh, df_pm = fetch_all_source_data()
-        
         # 2. 整合資料
         df_final = process_data(df_er, df_nhi, df_k, df_temp, df_rh, df_pm)
-        
         # 3. 執行模型與預測
         p_res, f_imp = run_model_pipeline(df_final)
-        
-        # 4. 上傳 (需確保有 service_account.json)
+        # 4. 上傳 Google Sheets
         upload_to_sheets(p_res, f_imp)
         
-        print(f"\n🎉 任務執行成功！預測 {p_res['Target_Period'].iloc[0]} 腸病毒總就診人次為 {p_res['Predicted_Total_Cases'].iloc[0]} 人")
+        # --- 執行新功能：發送 LINE 通知 ---
+        prediction_val = p_res['Predicted_Total_Cases'].iloc[0]
+        send_line_notification(prediction_val)
+        
+        print(f"\n🎉 任務執行成功！預測人數為 {prediction_val}")
         
     except Exception as e:
         print(f"❌ 發生錯誤: {e}")
