@@ -12,7 +12,17 @@ from sklearn.metrics import mean_absolute_error
 # 0. 參數與環境設定
 # ==========================================
 TARGET_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1seGpSiQSUCZMgEqs66nsycI5GLvqTiam8mLDry5G4t8/edit?usp=sharing'
-SERVICE_ACCOUNT_FILE = 'service_account.json' 
+SERVICE_ACCOUNT_FILE = 'service_account.json'
+gcp_json_content = os.getenv("GCP_SERVICE_ACCOUNT")
+
+if gcp_json_content:
+    print("✅ 偵測到 GCP_SERVICE_ACCOUNT 環境變數，正在產生憑證檔...")
+    with open(SERVICE_ACCOUNT_FILE, 'w') as f:
+        f.write(gcp_json_content)
+else:
+    print("❌ 錯誤：找不到 GCP_SERVICE_ACCOUNT 環境變數，請檢查 GitHub Secrets 設定。")
+    # 如果是在本地測試，且你有檔案的話，可以不報錯；
+    # 但在 GitHub Actions 上這會導致後續 upload 失敗。
 
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0024-001"
 CWA_TOKEN = os.getenv("CWA_TOKEN")
