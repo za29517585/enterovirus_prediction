@@ -15,6 +15,7 @@ from sklearn.metrics import mean_absolute_error
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0024-001"
 CWA_TOKEN = os.getenv("CWA_TOKEN")
 PM25_API_URL = "https://data.moenv.gov.tw/api/v2/aqx_p_322?api_key=4c89a32a-a214-461b-bf29-30ff32a61a8a&sort=monitordate%20desc&format=CSV"
+TARGET_SHEET_URL = "https://docs.google.com/spreadsheets/d/1seGpSiQSUCZMgEqs66nsycI5GLvqTiam8mLDry5G4t8/edit?usp=sharing"
 
 HIST_DIR = "./hist_data/"
 
