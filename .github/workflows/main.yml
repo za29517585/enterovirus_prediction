@@ -2,8 +2,8 @@ name: Daily Disease Forecast
 
 on:
   schedule:
-    - cron: '0 4 * * 6' 
-  workflow_dispatch:      # 支援手動執行
+    - cron: '0 4 * * 6' # 台灣時間每週六 12:00
+  workflow_dispatch:
 
 jobs:
   run-forecast:
@@ -25,6 +25,9 @@ jobs:
         env:
           CWA_TOKEN: ${{ secrets.CWA_TOKEN }}
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          # --- 加入 LINE 相關變數 ---
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: python enterovirus_main.py
 
       - name: 自動同步更新後的歷史檔案至 GitHub
