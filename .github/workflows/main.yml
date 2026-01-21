@@ -24,7 +24,7 @@ jobs:
       - name: 執行預測模型
         env:
           CWA_TOKEN: ${{ secrets.CWA_TOKEN }}
-          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SA_KEY }}
         run: python enterovirus_main.py
 
       - name: 自動同步更新後的歷史檔案至 GitHub
