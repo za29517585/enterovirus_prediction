@@ -1,6 +1,7 @@
 import requests
 import pandas as pd
 import numpy as np
+import json
 import os
 import gspread
 from datetime import datetime, timedelta
@@ -11,19 +12,6 @@ from sklearn.metrics import mean_absolute_error
 # ==========================================
 # 0. 參數與環境設定
 # ==========================================
-TARGET_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1seGpSiQSUCZMgEqs66nsycI5GLvqTiam8mLDry5G4t8/edit?usp=sharing'
-SERVICE_ACCOUNT_FILE = 'service_account.json'
-gcp_json_content = os.getenv("GCP_SA_KEY")
-
-if gcp_json_content:
-    print("✅ 偵測到 GCP_SERVICE_ACCOUNT 環境變數，正在產生憑證檔...")
-    with open(SERVICE_ACCOUNT_FILE, 'w') as f:
-        f.write(gcp_json_content)
-else:
-    print("❌ 錯誤：找不到 GCP_SERVICE_ACCOUNT 環境變數，請檢查 GitHub Secrets 設定。")
-    # 如果是在本地測試，且你有檔案的話，可以不報錯；
-    # 但在 GitHub Actions 上這會導致後續 upload 失敗。
-
 CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/C-B0024-001"
 CWA_TOKEN = os.getenv("CWA_TOKEN")
 PM25_API_URL = "https://data.moenv.gov.tw/api/v2/aqx_p_322?api_key=4c89a32a-a214-461b-bf29-30ff32a61a8a&sort=monitordate%20desc&format=CSV"
@@ -171,10 +159,22 @@ def run_model_pipeline(df):
 # 4. Google Sheets 上傳
 # ==========================================
 def upload_to_sheets(pred_df, importance_df):
-    print("📤 正在同步資料至 Google Sheets...")
+    print("📤 正在透過環境變數同步資料至 Google Sheets...")
+    
+    # 1. 從環境變數獲取 JSON 字串
+    gcp_sa_key_str = os.getenv("GCP_SA_KEY")
+    
+    if not gcp_sa_key_str:
+        raise ValueError("❌ 找不到環境變數 GCP_SA_KEY，請檢查設定。")
+    
+    # 2. 將 JSON 字串解析為 Dictionary
+    info = json.loads(gcp_sa_key_str)
+    
+    # 3. 使用 from_json_keyfile_dict 進行驗證
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
     client = gspread.authorize(creds)
+    
     sheet = client.open_by_url(TARGET_SHEET_URL)
     
     # --- 處理「預測結果」 ---
@@ -186,7 +186,7 @@ def upload_to_sheets(pred_df, importance_df):
     headers = pred_df.columns.tolist()
     current_values = ws_pred.get_all_values()
     if not current_values or current_values[0] != headers:
-        ws_pred.insert_row(headers, 1) # 自動插入標題
+        ws_pred.insert_row(headers, 1)
     
     ws_pred.append_rows(pred_df.values.tolist())
 
@@ -198,8 +198,8 @@ def upload_to_sheets(pred_df, importance_df):
     
     ws_stats.clear()
     ws_stats.update('A1', [['腸病毒預測模型 - 特徵重要性分析']])
-    ws_stats.update('A2', [importance_df.columns.tolist()]) # 欄位標題
-    ws_stats.update('A3', importance_df.values.tolist()) # 內容
+    ws_stats.update('A2', [importance_df.columns.tolist()])
+    ws_stats.update('A3', importance_df.values.tolist())
     print("✅ Sheets 更新完成！")
 
 # ==========================================
